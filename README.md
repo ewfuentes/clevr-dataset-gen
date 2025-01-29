@@ -1,5 +1,23 @@
 # CLEVR Dataset Generation
 
+To generate the dataset run:
+```
+./generate_dataset.sh --output <output_path> <additional args>
+```
+
+For example:
+```
+./generate_dataset.sh --output /tmp/clevr_output --num_images 30
+```
+
+To view all arguments, run:
+```
+./generate_dataset.sh --output /tmp/clevr_output --help
+```
+
+
+---
+
 This is the code used to generate the [CLEVR dataset](http://cs.stanford.edu/people/jcjohns/clevr/) as described in the paper:
 
 **[CLEVR: A Diagnostic Dataset for Compositional Language and Elementary Visual Reasoning](http://cs.stanford.edu/people/jcjohns/clevr/)**
