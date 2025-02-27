@@ -9,6 +9,8 @@ from __future__ import print_function
 import math, sys, random, argparse, json, os, tempfile
 from datetime import datetime as dt
 from collections import Counter
+import copy
+from pathlib import Path
 
 """
 Renders random scenes using Blender, each with with a random number of objects;
@@ -89,6 +91,12 @@ parser.add_argument('--start_idx', default=0, type=int,
          "multiple machines and recombine the results later.")
 parser.add_argument('--num_images', default=5, type=int,
     help="The number of images to render")
+parser.add_argument('--skip_ego_render', action="store_true", 
+    help="Skip rendering the ego images in blender")
+parser.add_argument('--render_overhead', action="store_true", 
+    help="Render overhead images of the scene")
+parser.add_argument('--prevent_occlusions', action="store_true", 
+    help="Prevent objects from being placed compleatly behind other objects")
 parser.add_argument('--filename_prefix', default='CLEVR',
     help="This prefix will be prepended to the rendered images and JSON scenes")
 parser.add_argument('--split', default='new',
@@ -312,12 +320,31 @@ def render_scene(args,
   # Render the scene and dump the scene data structure
   scene_struct['objects'] = objects
   scene_struct['relationships'] = compute_all_relationships(scene_struct)
-  while True:
-    try:
-      bpy.ops.render.render(write_still=True)
-      break
-    except Exception as e:
-      print(e)
+  if not args.skip_ego_render:
+    while True:
+        try:
+            bpy.ops.render.render(write_still=True)
+            break
+        except Exception as e:
+            print(e)
+  if args.render_overhead:
+    # Put a plane on the ground so we can compute cardinal directions
+
+    output_filepath = Path(output_image)
+    output_filepath = output_filepath.parent / "overhead_{}".format(output_filepath.name)
+    render_args.filepath = str(output_filepath)
+    old_location = copy.deepcopy(bpy.data.objects['Camera'].location)
+    bpy.data.objects['Camera'].constraints[0].mute = True  # turn off tracking constraint 
+    bpy.data.objects['Camera'].location  = [0, 0, 14]
+    bpy.data.objects['Camera'].rotation_euler  = [0, 0, 0]
+    while True:
+        try:
+            bpy.ops.render.render(write_still=True)
+            break
+        except Exception as e:
+            print(e)
+    bpy.data.objects['Camera'].location = old_location
+    bpy.data.objects['Camera'].constraints[0].mute = False  # turn off tracking constraint 
 
   with open(output_scene, 'w') as f:
     json.dump(scene_struct, f, indent=2)
@@ -383,8 +410,8 @@ def add_random_objects(scene_struct, num_objects, args, camera):
           assert direction_vec[2] == 0
           margin = dx * direction_vec[0] + dy * direction_vec[1]
           if 0 < margin < args.margin:
-            print(margin, args.margin, direction_name)
-            print('BROKEN MARGIN!')
+            # print(margin, args.margin, direction_name)
+            # print('BROKEN MARGIN!')
             margins_good = False
             break
         if not margins_good:
@@ -433,14 +460,15 @@ def add_random_objects(scene_struct, num_objects, args, camera):
     })
 
   # Check that all objects are at least partially visible in the rendered image
-  all_visible = check_visibility(blender_objects, args.min_pixels_per_object)
-  if not all_visible:
-    # If any of the objects are fully occluded then start over; delete all
-    # objects from the scene and place them all again.
-    print('Some objects are occluded; replacing objects')
-    for obj in blender_objects:
-      utils.delete_object(obj)
-    return add_random_objects(scene_struct, num_objects, args, camera)
+  if args.prevent_occlusions:
+    all_visible = check_visibility(blender_objects, args.min_pixels_per_object)
+    if not all_visible:
+        # If any of the objects are fully occluded then start over; delete all
+        # objects from the scene and place them all again.
+        print('Some objects are occluded; replacing objects')
+        for obj in blender_objects:
+            utils.delete_object(obj)
+        return add_random_objects(scene_struct, num_objects, args, camera)
 
   return objects, blender_objects
 
