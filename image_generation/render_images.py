@@ -6,7 +6,13 @@
 # of patent rights can be found in the PATENTS file in the same directory.
 
 from __future__ import print_function
-import math, sys, random, argparse, json, os, tempfile
+import math
+import sys
+import random
+import argparse
+import json
+import os
+import tempfile
 from datetime import datetime as dt
 from collections import Counter
 import copy
@@ -26,7 +32,8 @@ blender --background --python render_images.py -- [arguments to this script]
 
 INSIDE_BLENDER = True
 try:
-  import bpy, bpy_extras
+  import bpy
+  import bpy_extras
   from mathutils import Vector
 except ImportError as e:
   INSIDE_BLENDER = False
@@ -35,7 +42,7 @@ if INSIDE_BLENDER:
     import utils
   except ImportError as e:
     print("\nERROR")
-    print("Running render_images.py from Blender and cannot import utils.py.") 
+    print("Running render_images.py from Blender and cannot import utils.py.")
     print("You may need to add a .pth file to the site-packages of Blender's")
     print("bundled python with a command like this:\n")
     print("echo $PWD >> $BLENDER/$VERSION/python/lib/python3.5/site-packages/clevr.pth")
@@ -85,17 +92,21 @@ parser.add_argument('--max_retries', default=50, type=int,
          "re-placing all objects in the scene.")
 
 # Output settings
+parser.add_argument("--ego_camera_height_m", default=1, type=float, help="height of the ego panoramic camera")
+parser.add_argument("--xy_sample_range", default=2, type=float, help="plus/minus this value will be used to sample ego camera positions")
+parser.add_argument("--use_existing_scenes", action="store_true",
+                    help="Render images for pre-generated scenes from json")
 parser.add_argument('--start_idx', default=0, type=int,
     help="The index at which to start for numbering rendered images. Setting " +
          "this to non-zero values allows you to distribute rendering across " +
          "multiple machines and recombine the results later.")
 parser.add_argument('--num_images', default=5, type=int,
     help="The number of images to render")
-parser.add_argument('--skip_ego_render', action="store_true", 
+parser.add_argument('--skip_ego_render', action="store_true",
     help="Skip rendering the ego images in blender")
-parser.add_argument('--render_overhead', action="store_true", 
+parser.add_argument('--render_overhead', action="store_true",
     help="Render overhead images of the scene")
-parser.add_argument('--prevent_occlusions', action="store_true", 
+parser.add_argument('--prevent_occlusions', action="store_true",
     help="Prevent objects from being placed compleatly behind other objects")
 parser.add_argument('--filename_prefix', default='CLEVR',
     help="This prefix will be prepended to the rendered images and JSON scenes")
@@ -160,6 +171,7 @@ parser.add_argument('--render_tile_size', default=256, type=int,
          "rendering may achieve better performance using smaller tile sizes " +
          "while larger tile sizes may be optimal for GPU-based rendering.")
 
+
 def main(args):
   num_digits = 6
   prefix = '%s_%s_' % (args.filename_prefix, args.split)
@@ -176,43 +188,64 @@ def main(args):
     os.makedirs(args.output_scene_dir)
   if args.save_blendfiles == 1 and not os.path.isdir(args.output_blend_dir):
     os.makedirs(args.output_blend_dir)
+
+
+  print("Starting!")
+  if args.use_existing_scenes:
+    with open(args.output_scene_file, 'r') as f:
+      existing_scenes = json.load(f)
+    print("Rendering existing scenes")
+    for scene in existing_scenes['scenes'][args.start_idx:]:
+      img_path = os.path.join(args.output_image_dir, scene['image_filename'])
+      blend_path = None
+
+      render_scene(args,
+        num_objects=0,
+        output_index=None,
+        output_split=args.split,
+        output_image=img_path,
+        output_scene=None,
+        output_blendfile=blend_path,
+        existing_scene=scene,
+      )
   
-  all_scene_paths = []
-  for i in range(args.num_images):
-    img_path = img_template % (i + args.start_idx)
-    scene_path = scene_template % (i + args.start_idx)
-    all_scene_paths.append(scene_path)
-    blend_path = None
-    if args.save_blendfiles == 1:
-      blend_path = blend_template % (i + args.start_idx)
-    num_objects = random.randint(args.min_objects, args.max_objects)
-    render_scene(args,
-      num_objects=num_objects,
-      output_index=(i + args.start_idx),
-      output_split=args.split,
-      output_image=img_path,
-      output_scene=scene_path,
-      output_blendfile=blend_path,
-    )
+  else:
+    all_scene_paths = []
+    for i in range(args.num_images):
+      img_path = img_template % (i + args.start_idx)
+      scene_path = scene_template % (i + args.start_idx)
+      all_scene_paths.append(scene_path)
+      blend_path = None
+      if args.save_blendfiles == 1:
+        blend_path = blend_template % (i + args.start_idx)
+      num_objects = random.randint(args.min_objects, args.max_objects)
+      render_scene(args,
+        num_objects=num_objects,
+        output_index=(i + args.start_idx),
+        output_split=args.split,
+        output_image=img_path,
+        output_scene=scene_path,
+        output_blendfile=blend_path,
+      )
 
   # After rendering all images, combine the JSON files for each scene into a
   # single JSON file.
-  all_scenes = []
-  for scene_path in all_scene_paths:
-    with open(scene_path, 'r') as f:
-      all_scenes.append(json.load(f))
-  output = {
-    'info': {
-      'date': args.date,
-      'version': args.version,
-      'split': args.split,
-      'license': args.license,
-    },
-    'scenes': all_scenes
-  }
-  with open(args.output_scene_file, 'w') as f:
-    json.dump(output, f)
-
+  if not args.use_existing_scenes:
+    all_scenes = []
+    for scene_path in all_scene_paths:
+      with open(scene_path, 'r') as f:
+        all_scenes.append(json.load(f))
+    output = {
+      'info': {
+        'date': args.date,
+        'version': args.version,
+        'split': args.split,
+        'license': args.license,
+      },
+      'scenes': all_scenes
+    }
+    with open(args.output_scene_file, 'w') as f:
+      json.dump(output, f)
 
 
 def render_scene(args,
@@ -222,6 +255,7 @@ def render_scene(args,
     output_image='render.png',
     output_scene='render_json',
     output_blendfile=None,
+    existing_scene=None,
   ):
 
   # Load the main blendfile
@@ -233,6 +267,9 @@ def render_scene(args,
   # Set render arguments so we can get pixel coordinates later.
   # We use functionality specific to the CYCLES renderer so BLENDER_RENDER
   # cannot be used.
+
+
+
   render_args = bpy.context.scene.render
   render_args.engine = "CYCLES"
   render_args.filepath = output_image
@@ -259,6 +296,9 @@ def render_scene(args,
   if args.use_gpu == 1:
     bpy.context.scene.cycles.device = 'GPU'
 
+  def rand(L):
+    return 2.0 * L * (random.random() - 0.5)
+
   # This will give ground-truth information about the scene and its objects
   scene_struct = {
       'split': output_split,
@@ -272,8 +312,6 @@ def render_scene(args,
   bpy.ops.mesh.primitive_plane_add(radius=5)
   plane = bpy.context.object
 
-  def rand(L):
-    return 2.0 * L * (random.random() - 0.5)
 
   # Add random jitter to camera position
   if args.camera_jitter > 0:
@@ -315,21 +353,66 @@ def render_scene(args,
       bpy.data.objects['Lamp_Fill'].location[i] += rand(args.fill_light_jitter)
 
   # Now make some random objects
-  objects, blender_objects = add_random_objects(scene_struct, num_objects, args, camera)
+  if existing_scene is not None:
+    blender_objects = add_objects_from_scene_struct(
+        existing_scene, args, camera)
+    ego_position = existing_scene['ego_position']
+  else:
+    objects, blender_objects = add_random_objects(
+        scene_struct, num_objects, args, camera)
 
-  # Render the scene and dump the scene data structure
-  scene_struct['objects'] = objects
-  scene_struct['relationships'] = compute_all_relationships(scene_struct)
-  if not args.skip_ego_render:
+    # Render the scene and dump the scene data structure
+    scene_struct['objects'] = objects
+    # scene_struct['relationships'] = compute_all_relationships(scene_struct)
+
+
     while True:
-        try:
-            bpy.ops.render.render(write_still=True)
-            break
-        except Exception as e:
-            print(e)
+      ego_position = (rand(args.xy_sample_range), rand(args.xy_sample_range), args.ego_camera_height_m)
+      valid_position = True
+      for obj in blender_objects:
+        loc = tuple(obj.location)
+        obj_scale = obj.scale[0]
+        if "cube" in obj.name.lower():
+          obj_scale *= math.sqrt(2)
+        if ((ego_position[0] - loc[0])**2 + (ego_position[1] - loc[1])**2 < (obj_scale + 0.11)**2):  # 0.1 near clipping plane 
+          valid_position = False 
+          break
+      
+      if valid_position:
+        break;
+
+    scene_struct['ego_position'] = ego_position
+    with open(output_scene, 'w') as f:
+        json.dump(scene_struct, f, indent=2)
+
+
+  if not args.skip_ego_render:
+    old_type = bpy.data.objects['Camera'].data.type
+    old_pano_type = bpy.data.objects['Camera'].data.cycles.panorama_type
+
+    bpy.data.objects['Camera'].constraints[0].mute = True  # turn off tracking constraint 
+    bpy.data.objects['Camera'].location  = ego_position
+    bpy.data.objects['Camera'].rotation_euler  = [math.pi / 2, 0, -math.pi / 2]
+    bpy.data.objects['Camera'].data.type = 'PANO'
+    bpy.data.objects['Camera'].data.cycles.panorama_type = 'EQUIRECTANGULAR'
+    render_args.resolution_x = 200
+    render_args.resolution_y = 100
+    while True:
+      try:
+        bpy.ops.render.render(write_still=True)
+        break
+      except Exception as e:
+        print(e)
+
+    render_args.resolution_x = args.width
+    render_args.resolution_y = args.height
+    bpy.data.objects['Camera'].data.type = old_type
+    bpy.data.objects['Camera'].data.cycles.panorama_type = old_pano_type
+    bpy.data.objects['Camera'].constraints[0].mute = False 
+    # bpy.
   if args.render_overhead:
     # Put a plane on the ground so we can compute cardinal directions
-
+    print("Rendering overhead")
     output_filepath = Path(output_image)
     output_filepath = output_filepath.parent / "overhead_{}".format(output_filepath.name)
     render_args.filepath = str(output_filepath)
@@ -338,20 +421,62 @@ def render_scene(args,
     bpy.data.objects['Camera'].location  = [0, 0, 14]
     bpy.data.objects['Camera'].rotation_euler  = [0, 0, 0]
     while True:
-        try:
-            bpy.ops.render.render(write_still=True)
-            break
-        except Exception as e:
-            print(e)
+      try:
+        bpy.ops.render.render(write_still=True)
+        break
+      except Exception as e:
+        print(e)
     bpy.data.objects['Camera'].location = old_location
     bpy.data.objects['Camera'].constraints[0].mute = False  # turn off tracking constraint 
 
-  with open(output_scene, 'w') as f:
-    json.dump(scene_struct, f, indent=2)
 
   if output_blendfile is not None:
     bpy.ops.wm.save_as_mainfile(filepath=output_blendfile)
 
+def add_objects_from_scene_struct(scene_struct, args, camera):
+  """
+  Add random objects to the current blender scene
+  """
+
+  # Load the property file
+  with open(args.properties_json, 'r') as f:
+    properties = json.load(f)
+    color_name_to_rgba = {}
+    for name, rgb in properties['colors'].items():
+      rgba = [float(c) / 255.0 for c in rgb] + [1.0]
+      color_name_to_rgba[name] = rgba
+    size_mapping = list(properties['sizes'].items())
+
+  blender_objects = []
+  for obj in scene_struct['objects']:
+    # Choose a random size
+    size_name = obj['size']
+    r = properties['sizes'][size_name]
+    x, y, _ = obj['3d_coords']
+
+    obj_name_out = obj['shape']
+    obj_name = properties['shapes'][obj_name_out]
+    color_name = obj['color']
+    rgba = color_name_to_rgba[color_name]
+
+    # For cube, adjust the size a bit
+    if obj_name == 'Cube':
+      r /= math.sqrt(2)
+
+    # Choose random orientation for the object.
+    theta = obj['rotation']
+
+    # Actually add the object to the scene
+    utils.add_object(args.shape_dir, obj_name, r, (x, y), theta=theta)
+    bpy_obj = bpy.context.object
+    blender_objects.append(bpy_obj)
+
+    # Attach a random material
+    mat_name_out = obj['material']
+    mat_name = properties['materials'][mat_name_out]
+    utils.add_material(mat_name, Color=rgba)
+
+  return blender_objects
 
 def add_random_objects(scene_struct, num_objects, args, camera):
   """
