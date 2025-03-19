@@ -93,7 +93,9 @@ parser.add_argument('--max_retries', default=50, type=int,
 
 # Output settings
 parser.add_argument("--ego_camera_height_m", default=1, type=float, help="height of the ego panoramic camera")
+parser.add_argument("--overhead_camera_height_m", default=14, type=float, help="height of the overhead camera")
 parser.add_argument("--xy_sample_range", default=2, type=float, help="plus/minus this value will be used to sample ego camera positions")
+parser.add_argument("--xy_sample_range_objects", default=3, type=float, help="plus/minus this value will be used to sample ego camera positions")
 parser.add_argument("--use_existing_scenes", action="store_true",
                     help="Render images for pre-generated scenes from json")
 parser.add_argument('--start_idx', default=0, type=int,
@@ -102,6 +104,8 @@ parser.add_argument('--start_idx', default=0, type=int,
          "multiple machines and recombine the results later.")
 parser.add_argument('--num_images', default=5, type=int,
     help="The number of images to render")
+parser.add_argument('--all_objects_identical', action="store_true",
+    help="Make all objects identical")
 parser.add_argument('--skip_ego_render', action="store_true",
     help="Skip rendering the ego images in blender")
 parser.add_argument('--render_overhead', action="store_true",
@@ -191,6 +195,8 @@ def main(args):
 
 
   print("Starting!")
+  with open(str(Path(args.output_scene_dir).parent / "args.json"), "w") as f:
+    json.dump(vars(args), f, indent=2)
   if args.use_existing_scenes:
     with open(args.output_scene_file, 'r') as f:
       existing_scenes = json.load(f)
@@ -418,7 +424,7 @@ def render_scene(args,
     render_args.filepath = str(output_filepath)
     old_location = copy.deepcopy(bpy.data.objects['Camera'].location)
     bpy.data.objects['Camera'].constraints[0].mute = True  # turn off tracking constraint 
-    bpy.data.objects['Camera'].location  = [0, 0, 14]
+    bpy.data.objects['Camera'].location  = [0, 0, args.overhead_camera_height_m]
     bpy.data.objects['Camera'].rotation_euler  = [0, 0, 0]
     while True:
       try:
@@ -502,9 +508,16 @@ def add_random_objects(scene_struct, num_objects, args, camera):
   positions = []
   objects = []
   blender_objects = []
+  def get_first_item_and_key(d: dict):
+    k = next(iter(d))
+    v = d[v]
+    return k, v
   for i in range(num_objects):
     # Choose a random size
-    size_name, r = random.choice(size_mapping)
+    if args.all_objects_identical:
+      size_name, r = get_first_item_and_key(size_mapping)
+    else:
+      size_name, r = random.choice(size_mapping)
 
     # Try to place the object, ensuring that we don't intersect any existing
     # objects and that we are more than the desired margin away from all existing
@@ -518,8 +531,8 @@ def add_random_objects(scene_struct, num_objects, args, camera):
         for obj in blender_objects:
           utils.delete_object(obj)
         return add_random_objects(scene_struct, num_objects, args, camera)
-      x = random.uniform(-3, 3)
-      y = random.uniform(-3, 3)
+      x = random.uniform(-args.xy_sample_range_objects, args.xy_sample_range_objects)
+      y = random.uniform(-args.xy_sample_range_objects, args.xy_sample_range_objects)
       # Check to make sure the new object is further than min_dist from all
       # other objects, and further than margin along the four cardinal directions
       dists_good = True
@@ -547,11 +560,19 @@ def add_random_objects(scene_struct, num_objects, args, camera):
 
     # Choose random color and shape
     if shape_color_combos is None:
-      obj_name, obj_name_out = random.choice(object_mapping)
-      color_name, rgba = random.choice(list(color_name_to_rgba.items()))
+      if args.all_objects_identical:
+        obj_name, obj_name_out = get_first_item_and_key(object_mapping)
+        color_name, rgba = list(color_name_to_rgba.items())[0]
+      else:
+        obj_name, obj_name_out = random.choice(object_mapping)
+        color_name, rgba = random.choice(list(color_name_to_rgba.items()))
     else:
-      obj_name_out, color_choices = random.choice(shape_color_combos)
-      color_name = random.choice(color_choices)
+      if args.all_objects_identical:
+        obj_name_out, color_choices = get_first_item_and_key(shape_color_combos)
+        color_name = color_choices[0]
+      else:
+        obj_name_out, color_choices = random.choice(shape_color_combos)
+        color_name = random.choice(color_choices)
       obj_name = [k for k, v in object_mapping if v == obj_name_out][0]
       rgba = color_name_to_rgba[color_name]
 
